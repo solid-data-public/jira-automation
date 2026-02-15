@@ -48,7 +48,7 @@ flowchart LR
 - **GitHub** repository with Actions enabled
 - **Cursor** account (for `CURSOR_API_KEY`)
 - **Snowflake** access (for the analysis queries)
-- **Solid MCP** (for text2SQL in the skill; see [MCP and Skill in CI](#mcp-and-skill-in-ci))
+- **Solid MCP** (for text2SQL in the skill; requires `SOLIDDATA_MANAGEMENT_KEY` for auth; see [MCP and Skill in CI](#mcp-and-skill-in-ci))
 
 ## Deployment
 
@@ -58,6 +58,7 @@ Add these secrets in **Settings → Secrets and variables → Actions**:
 
 | Secret | Description |
 |--------|-------------|
+| `SOLIDDATA_MANAGEMENT_KEY` | Solid management key; exchanged for an access token at workflow start (see [Solid auth](#solid-auth)) |
 | `SNOWFLAKE_ACCOUNT` | Snowflake account identifier (e.g. `xy12345.us-east-1`) |
 | `SNOWFLAKE_USER` | Snowflake username |
 | `SNOWFLAKE_PASSWORD` | Snowflake password |
@@ -98,7 +99,15 @@ Add these secrets in **Settings → Secrets and variables → Actions**:
 
 Create a GitHub Personal Access Token with `repo` scope and store it securely in JIRA Automation (e.g. as a secret or variable).
 
-### 3. Verification
+### 3. Solid auth
+
+The workflow exchanges `SOLIDDATA_MANAGEMENT_KEY` for an access token at startup:
+
+1. The "Exchange Solid management key for token" step calls `https://backend.production.soliddata.io/api/v1/auth/exchange_user_access_key` with the management key.
+2. The returned token is stored as `SOLIDDATA_TOKEN` and passed to the Cursor step for Solid MCP (text2SQL) authentication.
+3. Add `SOLIDDATA_MANAGEMENT_KEY` to GitHub Secrets. Locally, use `scripts/exchange_solid_token.py` to verify the key works.
+
+### 4. Verification
 
 1. Create a test ticket in the configured JIRA project with the configured issue type.
 2. In GitHub, go to **Actions** and confirm the workflow run started.
@@ -130,6 +139,12 @@ Create a GitHub Personal Access Token with `repo` scope and store it securely in
 - Ensure the JIRA user has permission to add comments to the issue.
 - Check the workflow logs for the full error (secrets are masked).
 
+### Solid auth fails (401 or token exchange error)
+
+- Confirm `SOLIDDATA_MANAGEMENT_KEY` is set correctly in GitHub Secrets.
+- Verify the key is not expired and is valid for the production endpoint (`https://backend.production.soliddata.io`).
+- Run `python scripts/exchange_solid_token.py` locally with the same key to test.
+
 ### MCP not available in CI
 
 The skill uses `mcp_solid_text2sql`. If MCP does not work in Cursor CLI headless mode:
@@ -149,6 +164,16 @@ agent -p "Use the sunspectra-ecommerce-analyst skill to analyze: What is the ope
 ```
 
 Ensure `.env` is configured with Snowflake credentials and Cursor CLI is installed.
+
+### Exchange Solid token locally
+
+To verify `SOLIDDATA_MANAGEMENT_KEY` works:
+
+```bash
+python scripts/exchange_solid_token.py
+```
+
+Set `SOLIDDATA_MANAGEMENT_KEY` in `.env` or the environment. The script prints the access token to stdout.
 
 ### Test post_to_jira.py locally
 

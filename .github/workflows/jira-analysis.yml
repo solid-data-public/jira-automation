@@ -21,6 +21,16 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
+      - name: Exchange Solid management key for token
+        id: solid_auth
+        env:
+          SOLIDDATA_MANAGEMENT_KEY: ${{ secrets.SOLIDDATA_MANAGEMENT_KEY }}
+        run: |
+          TOKEN=$(python scripts/exchange_solid_token.py)
+          echo "SOLIDDATA_TOKEN<<TOKEN_EOF" >> $GITHUB_ENV
+          echo "$TOKEN" >> $GITHUB_ENV
+          echo "TOKEN_EOF" >> $GITHUB_ENV
+
       - name: Install Cursor CLI
         run: curl https://cursor.com/install -fsS | bash
 
@@ -31,6 +41,7 @@ jobs:
         id: cursor
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          SOLIDDATA_TOKEN: ${{ env.SOLIDDATA_TOKEN }}
           SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
           SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
           SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
