@@ -1,0 +1,99 @@
+name: JIRA Analysis Pipeline
+
+on:
+  repository_dispatch:
+    types: [jira_analysis_request]
+
+jobs:
+  analyze:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Cursor CLI
+        run: curl https://cursor.com/install -fsS | bash
+
+      - name: Add Cursor to PATH
+        run: echo "$HOME/.cursor/bin" >> $GITHUB_PATH && echo "$HOME/.cursor/bin" >> $GITHUB_ENV
+
+      - name: Run Cursor analysis
+        id: cursor
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
+        run: |
+          export PATH="$HOME/.cursor/bin:$PATH"
+          ISSUE_KEY="${{ github.event.client_payload.issue_key }}"
+          SUMMARY="${{ github.event.client_payload.summary }}"
+          DESCRIPTION="${{ github.event.client_payload.description }}"
+
+          PROMPT="You are analyzing JIRA ticket ${ISSUE_KEY}: ${SUMMARY}
+
+          Description: ${DESCRIPTION}
+
+          Use the sunspectra-ecommerce-analyst skill to conduct a full, deep, data-driven analysis.
+          Follow the skill's workflow: clarify the question, generate SQL via mcp_solid_text2sql,
+          execute via scripts/query_snowflake.py, interpret, and report. Output findings in the
+          skill's format (Finding, Limitation, Recommendation). Be skeptical and evidence-based."
+
+          if agent -p --force --output-format text "$PROMPT" > analysis_output.txt 2>&1; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            # Ensure we have something to post on failure
+            if [ ! -s analysis_output.txt ]; then
+              echo "Cursor CLI failed with no output. Check workflow logs." > analysis_output.txt
+            fi
+          fi
+
+      - name: Post analysis to JIRA
+        if: always()
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          ISSUE_KEY="${{ github.event.client_payload.issue_key }}"
+          if [ -z "$ISSUE_KEY" ]; then
+            echo "Error: issue_key not in payload"
+            exit 1
+          fi
+
+          if [ ! -f analysis_output.txt ]; then
+            echo "Cursor CLI produced no output. Check workflow logs." > analysis_output.txt
+          fi
+
+          {
+            if [ "${{ steps.cursor.outputs.status }}" != "success" ]; then
+              echo "**Analysis failed.** See workflow logs for details."
+              echo ""
+              echo "---"
+              echo "Raw output:"
+            else
+              echo "**Analysis complete.**"
+              echo ""
+            fi
+            head -c 32000 analysis_output.txt
+          } > jira_comment_body.txt
+
+          python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" < jira_comment_body.txt
+
+      - name: Fail on Cursor error
+        if: steps.cursor.outputs.status == 'failure'
+        run: exit 1
