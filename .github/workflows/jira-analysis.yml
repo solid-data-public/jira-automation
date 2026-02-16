@@ -74,7 +74,7 @@ jobs:
           Description: ${DESCRIPTION}
 
           Use the sunspectra-ecommerce-analyst skill to conduct a full, deep, data-driven analysis.
-          Follow the skill's workflow: clarify the question, generate SQL via mcp_solid_text2sql,
+          Follow the skill's workflow: clarify the question, generate SQL via mcp_solid-sunspectra_text2sql,
           execute via scripts/query_snowflake.py, interpret, and report. Output findings in the
           skill's format (Finding, Limitation, Recommendation). Be skeptical and evidence-based."
 
