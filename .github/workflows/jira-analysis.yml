@@ -16,7 +16,6 @@ on:
       description:
         description: "Ticket description"
         required: false
-        default: ""
         default: "Compare our sales by region in 2024 to those in 2023"
 
 jobs:
