@@ -118,19 +118,36 @@ jobs:
           with open('prompt.txt', 'w') as f: f.write(prompt)
           "
 
-          agent -p --force --output-format json "$(cat prompt.txt)" 2>/dev/null | tee cursor_output.json > /dev/null || true
+          agent -p --force --output-format stream-json "$(cat prompt.txt)" 2>/dev/null | tee cursor_output.json > /dev/null || true
           if [ -f cursor_output.json ] && python3 -c "
           import json, sys
-          try:
+          def extract():
             with open('cursor_output.json') as f:
-              for line in f:
-                if line.strip():
+              content = f.read()
+            # Try whole file first (single JSON object, possibly pretty-printed)
+            try:
+              d = json.loads(content)
+              if d.get('type') == 'result' and d.get('subtype') == 'success':
+                return d
+            except json.JSONDecodeError:
+              pass
+            # Try NDJSON (one JSON object per line)
+            for line in content.splitlines():
+              if line.strip():
+                try:
                   d = json.loads(line)
                   if d.get('type') == 'result' and d.get('subtype') == 'success':
-                    with open('analysis_output.txt', 'w') as out: out.write(d.get('result', '')[:32000])
-                    with open('session_id.txt', 'w') as out: out.write(d.get('session_id', '') or '')
-                    sys.exit(0)
-          except: pass
+                    return d
+                except json.JSONDecodeError:
+                  pass
+            return None
+          try:
+            d = extract()
+            if d:
+              with open('analysis_output.txt', 'w') as out: out.write(d.get('result', '')[:32000])
+              with open('session_id.txt', 'w') as out: out.write(d.get('session_id', '') or '')
+              sys.exit(0)
+          except Exception: pass
           sys.exit(1)
           "; then
             echo "status=success" >> $GITHUB_OUTPUT
@@ -171,7 +188,7 @@ jobs:
 
           if [ -f session.txt ] && [ -s session.txt ]; then
             SESSION_ID=$(cat session.txt)
-            agent -p --force --output-format json --resume "$SESSION_ID" "$USER_COMMENT" 2>/dev/null | tee cursor_output.json > /dev/null || true
+            agent -p --force --output-format stream-json --resume "$SESSION_ID" "$USER_COMMENT" 2>/dev/null | tee cursor_output.json > /dev/null || true
           else
             python3 -c "
           issue_key = '''${{ steps.mode.outputs.issue_key }}'''
@@ -183,21 +200,32 @@ jobs:
           Please address their feedback. Use the sunspectra-ecommerce-analyst skill if additional data analysis is needed.'''
           with open('fallback_prompt.txt', 'w') as f: f.write(prompt)
           "
-            agent -p --force --output-format json "$(cat fallback_prompt.txt)" 2>/dev/null | tee cursor_output.json > /dev/null || true
+            agent -p --force --output-format stream-json "$(cat fallback_prompt.txt)" 2>/dev/null | tee cursor_output.json > /dev/null || true
           fi
 
           if [ -f cursor_output.json ] && python3 -c "
           import json, sys
-          try:
+          def extract():
             with open('cursor_output.json') as f:
-              for line in f:
-                if line.strip():
+              content = f.read()
+            try:
+              d = json.loads(content)
+              if d.get('type') == 'result' and d.get('subtype') == 'success': return d
+            except json.JSONDecodeError: pass
+            for line in content.splitlines():
+              if line.strip():
+                try:
                   d = json.loads(line)
-                  if d.get('type') == 'result' and d.get('subtype') == 'success':
-                    with open('analysis_output.txt', 'w') as out: out.write(d.get('result', '')[:32000])
-                    with open('session_id.txt', 'w') as out: out.write(d.get('session_id', '') or '')
-                    sys.exit(0)
-          except: pass
+                  if d.get('type') == 'result' and d.get('subtype') == 'success': return d
+                except json.JSONDecodeError: pass
+            return None
+          try:
+            d = extract()
+            if d:
+              with open('analysis_output.txt', 'w') as out: out.write(d.get('result', '')[:32000])
+              with open('session_id.txt', 'w') as out: out.write(d.get('session_id', '') or '')
+              sys.exit(0)
+          except Exception: pass
           sys.exit(1)
           "; then
             echo "status=success" >> $GITHUB_OUTPUT
