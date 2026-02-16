@@ -88,6 +88,17 @@ jobs:
             fi
           fi
 
+      - name: Show analysis output
+        if: always()
+        run: |
+          if [ -f analysis_output.txt ]; then
+            echo "--- Analysis output ---"
+            cat analysis_output.txt
+            echo "--- End analysis output ---"
+          else
+            echo "No analysis_output.txt found."
+          fi
+
       - name: Post analysis to JIRA
         if: always()
         env:
