@@ -9,14 +9,6 @@ on:
         description: "JIRA issue key (e.g. PROJECT-123)"
         required: true
         default: "SA-1"
-      summary:
-        description: "Ticket summary"
-        required: true
-        default: "Analyze sales by region for 2024"
-      description:
-        description: "Ticket description"
-        required: false
-        default: "Compare our sales by region in 2024 to those in 2023"
 
 jobs:
   analyze:
@@ -35,6 +27,24 @@ jobs:
 
       - name: Install Python dependencies
         run: pip install -r requirements.txt
+
+      - name: Fetch JIRA issue
+        id: fetch
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          ISSUE_KEY="${{ github.event.client_payload.issue_key || github.event.inputs.issue_key }}"
+          if [ -z "$ISSUE_KEY" ]; then
+            echo "Error: issue_key not in payload"
+            exit 1
+          fi
+          echo "issue_key=$ISSUE_KEY" >> $GITHUB_OUTPUT
+          python scripts/fetch_jira_issue.py --issue-key "$ISSUE_KEY" \
+            --summary-file issue_summary.txt \
+            --description-file issue_description.txt \
+            --no-stdout
 
       - name: Exchange Solid management key for token
         id: solid_auth
@@ -67,20 +77,25 @@ jobs:
         run: |
           mkdir -p "${{ github.workspace }}/analysis_queries"
           export PATH="$HOME/.cursor/bin:$PATH"
-          ISSUE_KEY="${{ github.event.client_payload.issue_key || github.event.inputs.issue_key }}"
-          SUMMARY="${{ github.event.client_payload.summary || github.event.inputs.summary }}"
-          DESCRIPTION="${{ github.event.client_payload.description || github.event.inputs.description }}"
+          ISSUE_KEY="${{ steps.fetch.outputs.issue_key }}"
 
-          PROMPT="You are analyzing JIRA ticket ${ISSUE_KEY}: ${SUMMARY}
+          python -c "
+          with open('issue_summary.txt') as f: summary = f.read()
+          with open('issue_description.txt') as f: description = f.read()
+          issue_key = '''${{ steps.fetch.outputs.issue_key }}'''
+          prompt = '''You are analyzing JIRA ticket ''' + issue_key + ''': ''' + summary + '''
 
-          Description: ${DESCRIPTION}
+          Description:
+          ''' + description + '''
 
           Use the sunspectra-ecommerce-analyst skill to conduct a full, deep, data-driven analysis.
           Follow the skill's workflow: clarify the question, generate SQL via mcp_solid-sunspectra_text2sql,
           execute via scripts/query_snowflake.py, interpret, and report. Output findings in the
-          skill's format (Finding, Limitation, Recommendation). Be skeptical and evidence-based."
+          skill's format (Finding, Limitation, Recommendation). Be skeptical and evidence-based.'''
+          with open('prompt.txt', 'w') as f: f.write(prompt)
+          "
 
-          if agent -p --force --output-format text "$PROMPT" > analysis_output.txt 2>&1; then
+          if agent -p --force --output-format text "$(cat prompt.txt)" > analysis_output.txt 2>&1; then
             echo "status=success" >> $GITHUB_OUTPUT
           else
             echo "status=failure" >> $GITHUB_OUTPUT
@@ -122,9 +137,9 @@ jobs:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
         run: |
-          ISSUE_KEY="${{ github.event.client_payload.issue_key || github.event.inputs.issue_key }}"
+          ISSUE_KEY="${{ steps.fetch.outputs.issue_key }}"
           if [ -z "$ISSUE_KEY" ]; then
-            echo "Error: issue_key not in payload"
+            echo "Error: issue_key not available (fetch step may have failed)"
             exit 1
           fi
 

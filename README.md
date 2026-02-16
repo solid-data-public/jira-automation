@@ -37,8 +37,8 @@ flowchart LR
 **Step-by-step flow:**
 
 1. JIRA Automation fires when an issue is created (filtered by project and issue type).
-2. JIRA sends a POST request to GitHub's `repository_dispatch` API with the ticket key, summary, and description.
-3. GitHub Actions runs the workflow: checkout, Python setup, Cursor CLI install, agent run.
+2. JIRA sends a POST request to GitHub's `repository_dispatch` API with the ticket key.
+3. GitHub Actions runs the workflow: fetch issue from JIRA, checkout, Python setup, Cursor CLI install, agent run.
 4. Cursor CLI executes the sunspectra-ecommerce-analyst skill (text2SQL → Snowflake → analysis).
 5. `scripts/post_to_jira.py` posts the analysis output as a comment on the JIRA ticket.
 
@@ -90,12 +90,12 @@ Add these secrets in **Settings → Secrets and variables → Actions**:
 {
   "event_type": "jira_analysis_request",
   "client_payload": {
-    "issue_key": "{{issue.key}}",
-    "summary": "{{issue.fields.summary}}",
-    "description": "{{issue.fields.description}}"
+    "issue_key": "{{issue.key}}"
   }
 }
 ```
+
+The workflow fetches the summary and description from JIRA itself, so they do not need to be sent.
 
 Create a GitHub Personal Access Token with `repo` scope and store it securely in JIRA Automation (e.g. as a secret or variable).
 
@@ -113,7 +113,7 @@ The workflow exchanges `SOLIDDATA_MANAGEMENT_KEY` for an access token at startup
 2. In GitHub, go to **Actions** and confirm the workflow run started.
 3. When the run completes, check the JIRA ticket for a new comment with the analysis.
 
-**Manual test from GitHub UI:** Go to **Actions** → **JIRA Analysis Pipeline** → **Run workflow**. Enter an issue key, summary, and description. The workflow will run and post the analysis to the specified JIRA ticket.
+**Manual test from GitHub UI:** Go to **Actions** → **JIRA Analysis Pipeline** → **Run workflow**. Enter an issue key (e.g. SA-1). The workflow fetches the ticket from JIRA and posts the analysis as a comment.
 
 ## Configuration
 
