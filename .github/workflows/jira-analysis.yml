@@ -63,9 +63,9 @@ jobs:
           SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
           SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
           SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
-          SAVE_QUERIES_DIR: analysis_queries
+          SAVE_QUERIES_DIR: ${{ github.workspace }}/analysis_queries
         run: |
-          mkdir -p analysis_queries
+          mkdir -p "${{ github.workspace }}/analysis_queries"
           export PATH="$HOME/.cursor/bin:$PATH"
           ISSUE_KEY="${{ github.event.client_payload.issue_key || github.event.inputs.issue_key }}"
           SUMMARY="${{ github.event.client_payload.summary || github.event.inputs.summary }}"
@@ -101,6 +101,20 @@ jobs:
             echo "No analysis_output.txt found."
           fi
 
+      - name: Diagnose query files
+        if: always()
+        run: |
+          echo "--- analysis_queries directory ---"
+          QUERIES_DIR="${{ github.workspace }}/analysis_queries"
+          if [ -d "$QUERIES_DIR" ]; then
+            echo "Directory exists at $QUERIES_DIR. Contents:"
+            ls -la "$QUERIES_DIR"/
+            echo "File count: $(ls -1 "$QUERIES_DIR" 2>/dev/null | wc -l)"
+          else
+            echo "Directory does NOT exist at $QUERIES_DIR"
+          fi
+          echo "--- End diagnose ---"
+
       - name: Post analysis to JIRA
         if: always()
         env:
@@ -131,7 +145,7 @@ jobs:
             head -c 32000 analysis_output.txt
           } > jira_comment_body.txt
 
-          python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir analysis_queries < jira_comment_body.txt
+          python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/analysis_queries" < jira_comment_body.txt
 
       - name: Fail on Cursor error
         if: steps.cursor.outputs.status == 'failure'

@@ -20,6 +20,11 @@ import re
 import sys
 from pathlib import Path
 
+try:
+    import requests
+except ImportError:
+    requests = None  # type: ignore[assignment]
+
 # Load .env from project root
 _root = Path(__file__).resolve().parent.parent
 _dotenv = _root / ".env"
@@ -227,11 +232,12 @@ def _upload_attachments(
                 )
             if resp.status_code >= 400:
                 print(
-                    f"Warning: failed to upload {f.name}: {resp.status_code}",
+                    f"Warning: failed to upload {f.name}: {resp.status_code} {resp.text[:200]!r}",
                     file=sys.stderr,
                 )
             else:
                 uploaded.append(f.name)
+                print(f"Uploaded {f.name}", file=sys.stderr)
         except Exception as e:
             print(f"Warning: failed to upload {f.name}: {e}", file=sys.stderr)
     return uploaded
@@ -277,9 +283,7 @@ def main() -> None:
         )
         sys.exit(1)
 
-    try:
-        import requests
-    except ImportError:
+    if requests is None:
         print(
             "Error: requests not installed. Run: pip install requests",
             file=sys.stderr,
@@ -291,13 +295,21 @@ def main() -> None:
 
     uploaded: list[str] = []
     if args.attachments_dir:
-        attachments_path = Path(args.attachments_dir)
+        attachments_path = Path(args.attachments_dir).resolve()
         if attachments_path.exists() and attachments_path.is_dir():
+            files = list(attachments_path.iterdir())
+            print(f"Attachments dir: {attachments_path} ({len(files)} items)", file=sys.stderr)
             uploaded = _upload_attachments(base_url, auth, args.issue_key, attachments_path)
+            print(f"Uploaded {len(uploaded)} of {len(files)} files to JIRA", file=sys.stderr)
             if uploaded:
                 body += "\n\n---\n\n**SQL queries:**\n"
                 for name in sorted(uploaded):
                     body += f"- {name}\n"
+        else:
+            print(
+                f"Attachments dir not found or not a directory: {attachments_path}",
+                file=sys.stderr,
+            )
 
     url = f"{base_url}/rest/api/3/issue/{args.issue_key}/comment"
     payload = {"body": _markdown_to_adf(body)}
