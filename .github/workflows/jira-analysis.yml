@@ -63,7 +63,9 @@ jobs:
           SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
           SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
           SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
+          SAVE_QUERIES_DIR: analysis_queries
         run: |
+          mkdir -p analysis_queries
           export PATH="$HOME/.cursor/bin:$PATH"
           ISSUE_KEY="${{ github.event.client_payload.issue_key || github.event.inputs.issue_key }}"
           SUMMARY="${{ github.event.client_payload.summary || github.event.inputs.summary }}"
@@ -129,7 +131,7 @@ jobs:
             head -c 32000 analysis_output.txt
           } > jira_comment_body.txt
 
-          python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" < jira_comment_body.txt
+          python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir analysis_queries < jira_comment_body.txt
 
       - name: Fail on Cursor error
         if: steps.cursor.outputs.status == 'failure'

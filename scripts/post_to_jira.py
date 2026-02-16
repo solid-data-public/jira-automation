@@ -5,6 +5,11 @@ Post a comment to a JIRA Cloud issue.
 Usage:
   python scripts/post_to_jira.py --issue-key PROJECT-123 --body "Comment text"
   echo "Comment text" | python scripts/post_to_jira.py --issue-key PROJECT-123
+  python scripts/post_to_jira.py --issue-key PROJECT-123 --attachments-dir ./queries < body.txt
+
+When --attachments-dir is set, all files in that directory are uploaded as issue
+attachments before the comment is posted, and the comment body is appended with
+a list of the attached SQL query files.
 
 Requires env vars (or .env): JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN.
 """
@@ -148,6 +153,40 @@ def _markdown_to_adf(text: str) -> dict:
             if list_items:
                 content.append({"type": list_type, "content": list_items})
             continue
+        # Markdown table: | col1 | col2 | col3 |
+        if line.strip().startswith("|") and "|" in line.strip()[1:]:
+            table_rows: list[list[str]] = []
+            while i < len(lines) and lines[i].strip().startswith("|"):
+                row_line = lines[i]
+                cells = [c.strip() for c in row_line.split("|")[1:-1]]
+                if not cells:
+                    i += 1
+                    continue
+                # Skip separator row: |---|----|---|
+                if all(re.match(r"^[-:]+$", c) for c in cells):
+                    i += 1
+                    continue
+                table_rows.append(cells)
+                i += 1
+            if table_rows:
+                adf_rows: list[dict] = []
+                for row_idx, cells in enumerate(table_rows):
+                    cell_type = "tableHeader" if row_idx == 0 else "tableCell"
+                    adf_cells = [
+                        {
+                            "type": cell_type,
+                            "content": [
+                                {
+                                    "type": "paragraph",
+                                    "content": _parse_inline(cell),
+                                }
+                            ],
+                        }
+                        for cell in cells
+                    ]
+                    adf_rows.append({"type": "tableRow", "content": adf_cells})
+                content.append({"type": "table", "content": adf_rows})
+            continue
         # Empty line
         if not line.strip():
             i += 1
@@ -161,6 +200,41 @@ def _markdown_to_adf(text: str) -> dict:
         )
         i += 1
     return {"type": "doc", "version": 1, "content": content}
+
+
+def _upload_attachments(
+    base_url: str,
+    auth: tuple[str, str],
+    issue_key: str,
+    attachments_dir: Path,
+) -> list[str]:
+    """Upload all files in attachments_dir to the JIRA issue. Returns list of filenames."""
+    files = sorted(f for f in attachments_dir.iterdir() if f.is_file())
+    if not files:
+        return []
+    uploaded: list[str] = []
+    url = f"{base_url}/rest/api/3/issue/{issue_key}/attachments"
+    headers = {"X-Atlassian-Token": "no-check"}
+    for f in files:
+        try:
+            with open(f, "rb") as fp:
+                resp = requests.post(
+                    url,
+                    auth=auth,
+                    headers=headers,
+                    files={"file": (f.name, fp, "application/octet-stream")},
+                    timeout=60,
+                )
+            if resp.status_code >= 400:
+                print(
+                    f"Warning: failed to upload {f.name}: {resp.status_code}",
+                    file=sys.stderr,
+                )
+            else:
+                uploaded.append(f.name)
+        except Exception as e:
+            print(f"Warning: failed to upload {f.name}: {e}", file=sys.stderr)
+    return uploaded
 
 
 def main() -> None:
@@ -177,6 +251,11 @@ def main() -> None:
         "--body",
         type=str,
         help="Comment body. If not provided, reads from stdin.",
+    )
+    parser.add_argument(
+        "--attachments-dir",
+        type=str,
+        help="Directory of files to attach to the issue before posting the comment.",
     )
     args = parser.parse_args()
 
@@ -208,8 +287,19 @@ def main() -> None:
         sys.exit(1)
 
     base_url = os.environ["JIRA_BASE_URL"].rstrip("/")
-    url = f"{base_url}/rest/api/3/issue/{args.issue_key}/comment"
     auth = (os.environ["JIRA_EMAIL"], os.environ["JIRA_API_TOKEN"])
+
+    uploaded: list[str] = []
+    if args.attachments_dir:
+        attachments_path = Path(args.attachments_dir)
+        if attachments_path.exists() and attachments_path.is_dir():
+            uploaded = _upload_attachments(base_url, auth, args.issue_key, attachments_path)
+            if uploaded:
+                body += "\n\n---\n\n**SQL queries:**\n"
+                for name in sorted(uploaded):
+                    body += f"- {name}\n"
+
+    url = f"{base_url}/rest/api/3/issue/{args.issue_key}/comment"
     payload = {"body": _markdown_to_adf(body)}
 
     try:

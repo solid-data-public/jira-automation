@@ -6,6 +6,10 @@ Usage:
   python scripts/query_snowflake.py --sql "SELECT 1 AS n"
   echo "SELECT 1 AS n" | python scripts/query_snowflake.py
 
+When SAVE_QUERIES_DIR env is set, each query is saved to a .sql file in that directory
+(query_001.sql, query_002.sql, ...). Optional --name "description" uses that for the
+filename (sanitized) instead of the numeric default.
+
 Requires env vars (or .env): SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PASSWORD,
 SNOWFLAKE_WAREHOUSE, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA.
 """
@@ -13,6 +17,7 @@ SNOWFLAKE_WAREHOUSE, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA.
 import argparse
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
@@ -32,6 +37,31 @@ REQUIRED_ENV = [
 ]
 
 
+def _save_query(sql: str, queries_dir: Path, name: str | None) -> Path | None:
+    """Save SQL to a file in queries_dir. Returns path if saved, else None."""
+    queries_dir.mkdir(parents=True, exist_ok=True)
+    if name:
+        safe = re.sub(r"[^\w\-]", "_", name)[:60].strip("_") or "query"
+        base = f"{safe}.sql"
+        path = queries_dir / base
+        if path.exists():
+            n = 1
+            while (queries_dir / f"{safe}_{n}.sql").exists():
+                n += 1
+            path = queries_dir / f"{safe}_{n}.sql"
+    else:
+        existing = list(queries_dir.glob("query_*.sql"))
+        nums = []
+        for f in existing:
+            m = re.match(r"query_(\d+)\.sql", f.name)
+            if m:
+                nums.append(int(m.group(1)))
+        next_n = max(nums, default=0) + 1
+        path = queries_dir / f"query_{next_n:03d}.sql"
+    path.write_text(sql, encoding="utf-8")
+    return path
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Execute SQL against Snowflake and output results as JSON."
@@ -40,6 +70,11 @@ def main() -> None:
         "--sql",
         type=str,
         help="SQL to execute. If not provided, reads from stdin.",
+    )
+    parser.add_argument(
+        "--name",
+        type=str,
+        help="Optional descriptive name for saved query file (when SAVE_QUERIES_DIR is set).",
     )
     args = parser.parse_args()
 
@@ -52,6 +87,12 @@ def main() -> None:
     if not sql:
         print("Error: no SQL provided", file=sys.stderr)
         sys.exit(1)
+
+    queries_dir = os.getenv("SAVE_QUERIES_DIR")
+    if queries_dir:
+        saved = _save_query(sql, Path(queries_dir), args.name)
+        if saved:
+            print(f"Saved query to {saved}", file=sys.stderr)
 
     missing = [k for k in REQUIRED_ENV if not os.getenv(k)]
     if missing:

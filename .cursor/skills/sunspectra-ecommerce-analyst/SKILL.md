@@ -43,14 +43,16 @@ Example questions:
 Run the SQL against Snowflake:
 
 ```bash
-python scripts/query_snowflake.py --sql "<SQL from step 2>"
+python scripts/query_snowflake.py --sql "<SQL from step 2>" --name "short_description"
 ```
 
 Or via stdin:
 
 ```bash
-echo "<SQL>" | python scripts/query_snowflake.py
+echo "<SQL>" | python scripts/query_snowflake.py --name "short_description"
 ```
+
+**Note:** When run in the JIRA workflow, `SAVE_QUERIES_DIR` is set and each query is saved to a file. Use `--name` with a short descriptive slug (e.g. `sales_by_region`, `revenue_trend`) so the saved files have clear names. These files are attached to the JIRA comment.
 
 **Required env vars** (or `.env`): `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_DATABASE`. Optional: `SNOWFLAKE_SCHEMA`. Copy `.env.example` to `.env` and fill in values.
 
