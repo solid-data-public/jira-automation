@@ -2,7 +2,7 @@ name: JIRA Analysis Pipeline
 
 on:
   repository_dispatch:
-    types: [jira_analysis_request]
+    types: [jira_analysis_request, jira_comment_reply]
   workflow_dispatch:
     inputs:
       issue_key:
@@ -28,12 +28,8 @@ jobs:
       - name: Install Python dependencies
         run: pip install -r requirements.txt
 
-      - name: Fetch JIRA issue
-        id: fetch
-        env:
-          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
-          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
-          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+      - name: Resolve run mode
+        id: mode
         run: |
           ISSUE_KEY="${{ github.event.client_payload.issue_key || github.event.inputs.issue_key }}"
           if [ -z "$ISSUE_KEY" ]; then
@@ -41,9 +37,36 @@ jobs:
             exit 1
           fi
           echo "issue_key=$ISSUE_KEY" >> $GITHUB_OUTPUT
-          python scripts/fetch_jira_issue.py --issue-key "$ISSUE_KEY" \
+          if [ "${{ github.event.action }}" = "jira_comment_reply" ]; then
+            echo "is_reply=true" >> $GITHUB_OUTPUT
+          else
+            echo "is_reply=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Fetch JIRA issue
+        id: fetch_issue
+        if: steps.mode.outputs.is_reply != 'true'
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          python scripts/fetch_jira_issue.py --issue-key "${{ steps.mode.outputs.issue_key }}" \
             --summary-file issue_summary.txt \
             --description-file issue_description.txt \
+            --no-stdout
+
+      - name: Fetch JIRA comments
+        id: fetch_comments
+        if: steps.mode.outputs.is_reply == 'true'
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
+          JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
+        run: |
+          python scripts/fetch_jira_comments.py --issue-key "${{ steps.mode.outputs.issue_key }}" \
+            --session-file session.txt \
+            --user-comment-file user_comment.txt \
             --no-stdout
 
       - name: Exchange Solid management key for token
@@ -62,8 +85,9 @@ jobs:
       - name: Add Cursor to PATH
         run: echo "$HOME/.cursor/bin" >> $GITHUB_PATH
 
-      - name: Run Cursor analysis
+      - name: Run Cursor analysis (first run)
         id: cursor
+        if: steps.mode.outputs.is_reply != 'true'
         env:
           CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
           SOLIDDATA_TOKEN: ${{ env.SOLIDDATA_TOKEN }}
@@ -77,12 +101,11 @@ jobs:
         run: |
           mkdir -p "${{ github.workspace }}/analysis_queries"
           export PATH="$HOME/.cursor/bin:$PATH"
-          ISSUE_KEY="${{ steps.fetch.outputs.issue_key }}"
 
           python -c "
           with open('issue_summary.txt') as f: summary = f.read()
           with open('issue_description.txt') as f: description = f.read()
-          issue_key = '''${{ steps.fetch.outputs.issue_key }}'''
+          issue_key = '''${{ steps.mode.outputs.issue_key }}'''
           prompt = '''You are analyzing JIRA ticket ''' + issue_key + ''': ''' + summary + '''
 
           Description:
@@ -95,14 +118,96 @@ jobs:
           with open('prompt.txt', 'w') as f: f.write(prompt)
           "
 
-          if agent -p --force --output-format text "$(cat prompt.txt)" > analysis_output.txt 2>&1; then
+          agent -p --force --output-format json "$(cat prompt.txt)" 2>/dev/null | tee cursor_output.json > /dev/null || true
+          if [ -f cursor_output.json ] && python3 -c "
+          import json, sys
+          try:
+            with open('cursor_output.json') as f:
+              for line in f:
+                if line.strip():
+                  d = json.loads(line)
+                  if d.get('type') == 'result' and d.get('subtype') == 'success':
+                    with open('analysis_output.txt', 'w') as out: out.write(d.get('result', '')[:32000])
+                    with open('session_id.txt', 'w') as out: out.write(d.get('session_id', '') or '')
+                    sys.exit(0)
+          except: pass
+          sys.exit(1)
+          "; then
             echo "status=success" >> $GITHUB_OUTPUT
           else
             echo "status=failure" >> $GITHUB_OUTPUT
-            # Ensure we have something to post on failure
+            agent -p --force --output-format text "$(cat prompt.txt)" > analysis_output.txt 2>&1 || true
             if [ ! -s analysis_output.txt ]; then
               echo "Cursor CLI failed with no output. Check workflow logs." > analysis_output.txt
             fi
+            touch session_id.txt
+          fi
+
+      - name: Run Cursor analysis (reply)
+        id: cursor_reply
+        if: steps.mode.outputs.is_reply == 'true'
+        env:
+          CURSOR_API_KEY: ${{ secrets.CURSOR_API_KEY }}
+          SOLIDDATA_TOKEN: ${{ env.SOLIDDATA_TOKEN }}
+          SNOWFLAKE_ACCOUNT: ${{ secrets.SNOWFLAKE_ACCOUNT }}
+          SNOWFLAKE_USER: ${{ secrets.SNOWFLAKE_USER }}
+          SNOWFLAKE_PASSWORD: ${{ secrets.SNOWFLAKE_PASSWORD }}
+          SNOWFLAKE_WAREHOUSE: ${{ secrets.SNOWFLAKE_WAREHOUSE }}
+          SNOWFLAKE_DATABASE: ${{ secrets.SNOWFLAKE_DATABASE }}
+          SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
+          SAVE_QUERIES_DIR: ${{ github.workspace }}/analysis_queries
+        run: |
+          mkdir -p "${{ github.workspace }}/analysis_queries"
+          export PATH="$HOME/.cursor/bin:$PATH"
+
+          USER_COMMENT=$(cat user_comment.txt 2>/dev/null || echo "")
+          if [ -z "$USER_COMMENT" ]; then
+            echo "Error: no user comment found"
+            echo "status=failure" >> $GITHUB_OUTPUT
+            echo "No user comment to respond to." > analysis_output.txt
+            touch session_id.txt
+            exit 0
+          fi
+
+          if [ -f session.txt ] && [ -s session.txt ]; then
+            SESSION_ID=$(cat session.txt)
+            agent -p --force --output-format json --resume "$SESSION_ID" "$USER_COMMENT" 2>/dev/null | tee cursor_output.json > /dev/null || true
+          else
+            python3 -c "
+          issue_key = '''${{ steps.mode.outputs.issue_key }}'''
+          user = open('user_comment.txt').read()
+          prompt = '''You previously provided an analysis on JIRA ticket ''' + issue_key + '''. The user has now responded:
+
+          ''' + user + '''
+
+          Please address their feedback. Use the sunspectra-ecommerce-analyst skill if additional data analysis is needed.'''
+          with open('fallback_prompt.txt', 'w') as f: f.write(prompt)
+          "
+            agent -p --force --output-format json "$(cat fallback_prompt.txt)" 2>/dev/null | tee cursor_output.json > /dev/null || true
+          fi
+
+          if [ -f cursor_output.json ] && python3 -c "
+          import json, sys
+          try:
+            with open('cursor_output.json') as f:
+              for line in f:
+                if line.strip():
+                  d = json.loads(line)
+                  if d.get('type') == 'result' and d.get('subtype') == 'success':
+                    with open('analysis_output.txt', 'w') as out: out.write(d.get('result', '')[:32000])
+                    with open('session_id.txt', 'w') as out: out.write(d.get('session_id', '') or '')
+                    sys.exit(0)
+          except: pass
+          sys.exit(1)
+          "; then
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "status=failure" >> $GITHUB_OUTPUT
+            agent -p --force --output-format text "$(cat user_comment.txt)" > analysis_output.txt 2>&1 || true
+            if [ ! -s analysis_output.txt ]; then
+              echo "Cursor CLI failed. Session may have expired." > analysis_output.txt
+            fi
+            touch session_id.txt
           fi
 
       - name: Show analysis output
@@ -137,9 +242,9 @@ jobs:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
         run: |
-          ISSUE_KEY="${{ steps.fetch.outputs.issue_key }}"
+          ISSUE_KEY="${{ steps.mode.outputs.issue_key }}"
           if [ -z "$ISSUE_KEY" ]; then
-            echo "Error: issue_key not available (fetch step may have failed)"
+            echo "Error: issue_key not available"
             exit 1
           fi
 
@@ -147,21 +252,30 @@ jobs:
             echo "Cursor CLI produced no output. Check workflow logs." > analysis_output.txt
           fi
 
+          CURSOR_STATUS="${{ steps.cursor.outputs.status }}${{ steps.cursor_reply.outputs.status }}"
           {
-            if [ "${{ steps.cursor.outputs.status }}" != "success" ]; then
+            if [ "$CURSOR_STATUS" != "success" ]; then
               echo "**Analysis failed.** See workflow logs for details."
               echo ""
               echo "---"
               echo "Raw output:"
             else
-              echo "**Analysis complete.**"
+              if [ "${{ steps.mode.outputs.is_reply }}" = "true" ]; then
+                echo "**Response:**"
+              else
+                echo "**Analysis complete.**"
+              fi
               echo ""
             fi
             head -c 32000 analysis_output.txt
           } > jira_comment_body.txt
 
-          python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/analysis_queries" < jira_comment_body.txt
+          if [ -f session_id.txt ] && [ -s session_id.txt ]; then
+            python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/analysis_queries" --append-session "$(cat session_id.txt)" < jira_comment_body.txt
+          else
+            python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/analysis_queries" < jira_comment_body.txt
+          fi
 
       - name: Fail on Cursor error
-        if: steps.cursor.outputs.status == 'failure'
+        if: steps.cursor.outputs.status == 'failure' || steps.cursor_reply.outputs.status == 'failure'
         run: exit 1

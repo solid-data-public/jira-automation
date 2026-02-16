@@ -7,8 +7,9 @@ Usage:
   echo "SELECT 1 AS n" | python scripts/query_snowflake.py
 
 When SAVE_QUERIES_DIR env is set, each query is saved to a .sql file in that directory
-(query_001.sql, query_002.sql, ...). Optional --name "description" uses that for the
-filename (sanitized) instead of the numeric default.
+(query_001.sql, query_002.sql, ...). Optional --name uses that for the filename
+(sanitized). Optional --description (e.g. from Solid MCP generation_notes) is written
+as SQL comments (-- line) at the top of each saved file.
 
 Requires env vars (or .env): SNOWFLAKE_ACCOUNT, SNOWFLAKE_USER, SNOWFLAKE_PASSWORD,
 SNOWFLAKE_WAREHOUSE, SNOWFLAKE_DATABASE, SNOWFLAKE_SCHEMA.
@@ -37,7 +38,9 @@ REQUIRED_ENV = [
 ]
 
 
-def _save_query(sql: str, queries_dir: Path, name: str | None) -> Path | None:
+def _save_query(
+    sql: str, queries_dir: Path, name: str | None, description: str | None = None
+) -> Path | None:
     """Save SQL to a file in queries_dir. Returns path if saved, else None."""
     queries_dir.mkdir(parents=True, exist_ok=True)
     if name:
@@ -58,7 +61,12 @@ def _save_query(sql: str, queries_dir: Path, name: str | None) -> Path | None:
                 nums.append(int(m.group(1)))
         next_n = max(nums, default=0) + 1
         path = queries_dir / f"query_{next_n:03d}.sql"
-    path.write_text(sql, encoding="utf-8")
+    content = sql
+    if description and description.strip():
+        lines = description.strip().splitlines()
+        header = "\n".join(f"-- {line}" for line in lines) + "\n\n"
+        content = header + sql
+    path.write_text(content, encoding="utf-8")
     return path
 
 
@@ -76,6 +84,11 @@ def main() -> None:
         type=str,
         help="Optional descriptive name for saved query file (when SAVE_QUERIES_DIR is set).",
     )
+    parser.add_argument(
+        "--description",
+        type=str,
+        help="Optional description of what the query does (from Solid MCP generation_notes). Saved as SQL comments at top of file.",
+    )
     args = parser.parse_args()
 
     sql = args.sql
@@ -90,7 +103,9 @@ def main() -> None:
 
     queries_dir = os.getenv("SAVE_QUERIES_DIR")
     if queries_dir:
-        saved = _save_query(sql, Path(queries_dir), args.name)
+        saved = _save_query(
+            sql, Path(queries_dir), args.name, description=args.description
+        )
         if saved:
             print(f"Saved query to {saved}", file=sys.stderr)
 

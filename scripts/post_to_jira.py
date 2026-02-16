@@ -11,6 +11,9 @@ When --attachments-dir is set, all files in that directory are uploaded as issue
 attachments before the comment is posted, and the comment body is appended with
 a list of the attached SQL query files.
 
+When --append-session is set, appends "Reply to continue the conversation. Session: `uuid`"
+so the reply workflow can resume the Cursor conversation.
+
 Requires env vars (or .env): JIRA_BASE_URL, JIRA_EMAIL, JIRA_API_TOKEN.
 """
 
@@ -263,6 +266,12 @@ def main() -> None:
         type=str,
         help="Directory of files to attach to the issue before posting the comment.",
     )
+    parser.add_argument(
+        "--append-session",
+        type=str,
+        metavar="SESSION_ID",
+        help="Append session ID for reply continuation (embeds in comment).",
+    )
     args = parser.parse_args()
 
     body = args.body
@@ -310,6 +319,9 @@ def main() -> None:
                 f"Attachments dir not found or not a directory: {attachments_path}",
                 file=sys.stderr,
             )
+
+    if args.append_session:
+        body += "\n\n---\n\n*Reply to continue the conversation. Session: `" + args.append_session + "`*"
 
     url = f"{base_url}/rest/api/3/issue/{args.issue_key}/comment"
     payload = {"body": _markdown_to_adf(body)}

@@ -4,9 +4,9 @@ When a new JIRA ticket is created (in a specific project and issue type), this p
 
 ## Overview
 
-1. **Trigger:** A new JIRA ticket is created in the configured project with the configured issue type.
+1. **Trigger:** A new JIRA ticket is created (or a user replies to the bot's comment) in the configured project.
 2. **Analysis:** JIRA Automation sends a webhook to GitHub, which runs a workflow. The workflow invokes Cursor CLI with the sunspectra-ecommerce-analyst skill to analyze the ticket using Snowflake data (via Solid MCP text2SQL and `scripts/query_snowflake.py`).
-3. **Post-back:** The analysis output is posted as a comment on the original JIRA ticket.
+3. **Post-back:** The analysis output is posted as a comment on the original JIRA ticket. Each comment includes a session ID so users can reply to continue the conversation.
 
 ## How It Works
 
@@ -99,6 +99,34 @@ The workflow fetches the summary and description from JIRA itself, so they do no
 
 Create a GitHub Personal Access Token with `repo` scope and store it securely in JIRA Automation (e.g. as a secret or variable).
 
+### 2b. JIRA Automation Rule (Comment Reply)
+
+To let users reply to the bot's analysis and continue the conversation:
+
+1. Create a **second** automation rule.
+2. **Trigger:** Comment created
+3. **Conditions:**
+   - Project equals `[YOUR_PROJECT_KEY]`
+   - Issue type equals `[YOUR_ISSUE_TYPE]`
+   - Comment author is not `[JIRA_EMAIL]` (exclude the bot so it doesn't reply to itself)
+4. **Action:** Send web request
+   - **URL:** `https://api.github.com/repos/OWNER/REPO/dispatches`
+   - **Method:** POST
+   - **Headers:** Same as above
+   - **Body (JSON):**
+
+```json
+{
+  "event_type": "jira_comment_reply",
+  "client_payload": {
+    "issue_key": "{{issue.key}}",
+    "comment_body": "{{comment.body}}"
+  }
+}
+```
+
+The workflow fetches the session ID from the bot's previous comment and uses Cursor's `--resume` to continue the conversation. If the session has expired, it falls back to a fresh run with context injection.
+
 ### 3. Solid auth
 
 The workflow exchanges `SOLIDDATA_MANAGEMENT_KEY` for an access token at startup:
@@ -188,3 +216,11 @@ python scripts/post_to_jira.py --issue-key PROJECT-123 --body "Test analysis out
 ```
 
 Set `JIRA_BASE_URL`, `JIRA_EMAIL`, and `JIRA_API_TOKEN` in `.env` or the environment.
+
+### Test fetch_jira_comments.py locally
+
+```bash
+python scripts/fetch_jira_comments.py --issue-key SA-1
+```
+
+Fetches comments and extracts the session ID from the bot's comment (for reply continuation).
