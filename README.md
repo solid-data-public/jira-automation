@@ -113,6 +113,8 @@ The workflow exchanges `SOLIDDATA_MANAGEMENT_KEY` for an access token at startup
 2. In GitHub, go to **Actions** and confirm the workflow run started.
 3. When the run completes, check the JIRA ticket for a new comment with the analysis.
 
+**Manual test from GitHub UI:** Go to **Actions** → **JIRA Analysis Pipeline** → **Run workflow**. Enter an issue key, summary, and description. The workflow will run and post the analysis to the specified JIRA ticket.
+
 ## Configuration
 
 - **Project and issue type:** Edit the JIRA Automation rule conditions to change which tickets trigger the pipeline.

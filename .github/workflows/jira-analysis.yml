@@ -3,6 +3,18 @@ name: JIRA Analysis Pipeline
 on:
   repository_dispatch:
     types: [jira_analysis_request]
+  workflow_dispatch:
+    inputs:
+      issue_key:
+        description: "JIRA issue key (e.g. PROJECT-123)"
+        required: true
+      summary:
+        description: "Ticket summary"
+        required: true
+      description:
+        description: "Ticket description"
+        required: false
+        default: ""
 
 jobs:
   analyze:
@@ -50,9 +62,9 @@ jobs:
           SNOWFLAKE_SCHEMA: ${{ secrets.SNOWFLAKE_SCHEMA }}
         run: |
           export PATH="$HOME/.cursor/bin:$PATH"
-          ISSUE_KEY="${{ github.event.client_payload.issue_key }}"
-          SUMMARY="${{ github.event.client_payload.summary }}"
-          DESCRIPTION="${{ github.event.client_payload.description }}"
+          ISSUE_KEY="${{ github.event.client_payload.issue_key || github.event.inputs.issue_key }}"
+          SUMMARY="${{ github.event.client_payload.summary || github.event.inputs.summary }}"
+          DESCRIPTION="${{ github.event.client_payload.description || github.event.inputs.description }}"
 
           PROMPT="You are analyzing JIRA ticket ${ISSUE_KEY}: ${SUMMARY}
 
@@ -80,7 +92,7 @@ jobs:
           JIRA_EMAIL: ${{ secrets.JIRA_EMAIL }}
           JIRA_API_TOKEN: ${{ secrets.JIRA_API_TOKEN }}
         run: |
-          ISSUE_KEY="${{ github.event.client_payload.issue_key }}"
+          ISSUE_KEY="${{ github.event.client_payload.issue_key || github.event.inputs.issue_key }}"
           if [ -z "$ISSUE_KEY" ]; then
             echo "Error: issue_key not in payload"
             exit 1
