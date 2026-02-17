@@ -266,6 +266,19 @@ jobs:
           fi
           echo "--- End diagnose ---"
 
+      - name: Merge SQL queries
+        if: always()
+        run: |
+          QUERIES_DIR="${{ github.workspace }}/analysis_queries"
+          ATTACHMENTS_DIR="${{ github.workspace }}/jira_attachments"
+          mkdir -p "$ATTACHMENTS_DIR"
+          if [ "${{ steps.mode.outputs.is_reply }}" = "true" ]; then
+            OUTPUT_NAME="reply_$(date +%Y%m%d_%H%M%S)_queries.sql"
+          else
+            OUTPUT_NAME="initial_analysis_queries.sql"
+          fi
+          python3 scripts/merge_sql_queries.py --input-dir "$QUERIES_DIR" --output-file "$ATTACHMENTS_DIR/$OUTPUT_NAME" || true
+
       - name: Split reasoning from response
         if: always()
         run: |
@@ -322,9 +335,9 @@ jobs:
           fi
 
           if [ -f session_id.txt ] && [ -s session_id.txt ]; then
-            python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/analysis_queries" --append-session "$(cat session_id.txt)" $REASONING_ARG < jira_comment_body.txt
+            python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/jira_attachments" --append-session "$(cat session_id.txt)" $REASONING_ARG < jira_comment_body.txt
           else
-            python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/analysis_queries" $REASONING_ARG < jira_comment_body.txt
+            python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/jira_attachments" $REASONING_ARG < jira_comment_body.txt
           fi
 
       - name: Fail on Cursor error
