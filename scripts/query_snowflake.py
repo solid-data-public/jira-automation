@@ -7,7 +7,9 @@ Usage:
   echo "SELECT 1 AS n" | python scripts/query_snowflake.py
 
 When SAVE_QUERIES_DIR env is set, each query is saved to a .sql file in that directory
-(query_001.sql, query_002.sql, ...). Optional --name uses that for the filename
+(query_001.sql, query_002.sql, ...). You must pass --source mcp (queries from Solid MCP
+text2sql) or --source cursor (Cursor-generated; not allowed in JIRA workflow). The source
+is written as a header comment for validation. Optional --name uses that for the filename
 (sanitized). Optional --description (e.g. from Solid MCP generation_notes) is written
 as SQL comments (-- line) at the top of each saved file.
 
@@ -39,10 +41,25 @@ REQUIRED_ENV = [
 
 
 def _save_query(
-    sql: str, queries_dir: Path, name: str | None, description: str | None = None
+    sql: str,
+    queries_dir: Path,
+    name: str | None,
+    description: str | None = None,
+    source: str = "unknown",
 ) -> Path | None:
     """Save SQL to a file in queries_dir. Returns path if saved, else None."""
     queries_dir.mkdir(parents=True, exist_ok=True)
+    source_labels = {
+        "mcp": "Solid MCP text2sql",
+        "cursor": "Cursor-generated (not from MCP)",
+        "unknown": "Unknown (source not specified)",
+    }
+    source_label = source_labels.get(source, f"Unknown ({source})")
+    header_lines = [f"Source: {source_label}"]
+    if description and description.strip():
+        header_lines.extend(description.strip().splitlines())
+    header = "\n".join(f"-- {line}" for line in header_lines) + "\n\n"
+    content = header + sql
     if name:
         safe = re.sub(r"[^\w\-]", "_", name)[:60].strip("_") or "query"
         base = f"{safe}.sql"
@@ -61,11 +78,6 @@ def _save_query(
                 nums.append(int(m.group(1)))
         next_n = max(nums, default=0) + 1
         path = queries_dir / f"query_{next_n:03d}.sql"
-    content = sql
-    if description and description.strip():
-        lines = description.strip().splitlines()
-        header = "\n".join(f"-- {line}" for line in lines) + "\n\n"
-        content = header + sql
     path.write_text(content, encoding="utf-8")
     return path
 
@@ -89,6 +101,12 @@ def main() -> None:
         type=str,
         help="Optional description of what the query does (from Solid MCP generation_notes). Saved as SQL comments at top of file.",
     )
+    parser.add_argument(
+        "--source",
+        type=str,
+        choices=["mcp", "cursor"],
+        help="How the SQL was generated: mcp (Solid MCP text2sql) or cursor (Cursor-generated). Required when SAVE_QUERIES_DIR is set; must be mcp in JIRA workflow.",
+    )
     args = parser.parse_args()
 
     sql = args.sql
@@ -103,8 +121,19 @@ def main() -> None:
 
     queries_dir = os.getenv("SAVE_QUERIES_DIR")
     if queries_dir:
+        if args.source != "mcp":
+            print(
+                "Error: When SAVE_QUERIES_DIR is set, all SQL must come from Solid MCP text2sql. "
+                "Pass --source mcp. Do not write SQL yourself.",
+                file=sys.stderr,
+            )
+            sys.exit(1)
         saved = _save_query(
-            sql, Path(queries_dir), args.name, description=args.description
+            sql,
+            Path(queries_dir),
+            args.name,
+            description=args.description,
+            source=args.source or "mcp",
         )
         if saved:
             print(f"Saved query to {saved}", file=sys.stderr)

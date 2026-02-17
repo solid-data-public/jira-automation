@@ -17,7 +17,7 @@ You are a top e-commerce analyst. Your job is to identify opportunities for Suns
 
 ## Data Access
 
-**Step 2 (SQL generation):** Use the `mcp_solid-sunspectra_text2sql` tool to generate SQL. Extract both `sql_query` and `generation_notes` from the response.
+**Step 2 (SQL generation):** Use the `mcp_solid-sunspectra_text2sql` tool to generate SQL. Extract both `sql_query` and `generation_notes` from the response. **You must not write SQL yourself.** All SQL must come from this MCP tool.
 
 - **semantic_layer_id**: `da8c7ed7-7713-48f2-bcbd-e39a43379e13`
 - **question**: Phrase your business question in natural language. Be specific.
@@ -32,7 +32,7 @@ Example questions:
 ## Workflow
 
 1. **Clarify the question.** What exactly are we trying to learn?
-2. **Generate SQL.** Use `mcp_solid-sunspectra_text2sql` to get the SQL. Extract `sql_query` and `generation_notes` from the response. If the query fails or returns no useful SQL, say so. The query may have a LIMIT clause at the end. Remove it.
+2. **Generate SQL.** Use `mcp_solid-sunspectra_text2sql` to get the SQL. Extract `sql_query` and `generation_notes` from the response. Do not write SQL yourself—all SQL must come from the MCP. If the query fails or returns no useful SQL, say so. The query may have a LIMIT clause at the end. Remove it.
 3. **Execute against Snowflake.** Run the SQL from step 2 using `scripts/query_snowflake.py`. Pass the SQL via `--sql` or stdin. Parse the JSON output for analysis. See "Step 3: Snowflake execution" below.
 4. **Interpret with care.** Distinguish correlation from causation. Note sample size and time range.
 5. **Report honestly.** If data doesn't support a conclusion, say "We don't have data to answer this" or "The data is inconclusive."
@@ -43,16 +43,16 @@ Example questions:
 Run the SQL against Snowflake:
 
 ```bash
-python scripts/query_snowflake.py --sql "<SQL from step 2>" --name "short_description" --description "<generation_notes from step 2>"
+python scripts/query_snowflake.py --sql "<SQL from step 2>" --name "short_description" --description "<generation_notes from step 2>" --source mcp
 ```
 
 Or via stdin:
 
 ```bash
-echo "<SQL>" | python scripts/query_snowflake.py --name "short_description" --description "<generation_notes from step 2>"
+echo "<SQL>" | python scripts/query_snowflake.py --name "short_description" --description "<generation_notes from step 2>" --source mcp
 ```
 
-**Note:** When run in the JIRA workflow, `SAVE_QUERIES_DIR` is set and each query is saved to a file. Use `--name` with a short descriptive slug (e.g. `sales_by_region`, `revenue_trend`) so the saved files have clear names. Always pass `--description` with the `generation_notes` from the text2sql response—it is written as SQL comments at the top of each saved file. These files are attached to the JIRA comment.
+**Note:** When run in the JIRA workflow, `SAVE_QUERIES_DIR` is set and each query is saved to a file. You must pass `--source mcp` (all SQL must come from the MCP—the script will reject queries without it). Use `--name` with a short descriptive slug (e.g. `sales_by_region`, `revenue_trend`) so the saved files have clear names. Always pass `--description` with the `generation_notes` from the text2sql response. The saved file includes a header showing the source (MCP vs Cursor-generated) for validation. These files are attached to the JIRA comment.
 
 **Required env vars** (or `.env`): `SNOWFLAKE_ACCOUNT`, `SNOWFLAKE_USER`, `SNOWFLAKE_PASSWORD`, `SNOWFLAKE_WAREHOUSE`, `SNOWFLAKE_DATABASE`. Optional: `SNOWFLAKE_SCHEMA`. Copy `.env.example` to `.env` and fill in values.
 
@@ -72,6 +72,7 @@ The final response should be scannable and actionable. Do not repeat your reason
 
 ## Anti-Patterns
 
+- **Do not write SQL yourself.** All SQL must come from `mcp_solid-sunspectra_text2sql`. Never use your own understanding of the schema to write queries.
 - Don't recommend actions without citing supporting data
 - Don't assume data exists for every question—check first
 - Don't overstate confidence when sample sizes are small or time ranges are narrow

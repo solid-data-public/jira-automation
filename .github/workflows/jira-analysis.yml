@@ -112,8 +112,9 @@ jobs:
           ''' + description + '''
 
           Use the sunspectra-ecommerce-analyst skill to conduct a full, deep, data-driven analysis.
-          Follow the skill's workflow: clarify the question, generate SQL via mcp_solid-sunspectra_text2sql,
-          execute via scripts/query_snowflake.py, interpret, and report. Be skeptical and evidence-based.
+          Follow the skill's workflow: clarify the question, generate SQL via mcp_solid-sunspectra_text2sql
+          (do not write SQL yourself—all SQL must come from that MCP), execute via scripts/query_snowflake.py
+          with --source mcp, interpret, and report. Be skeptical and evidence-based.
 
           Structure your output: put your reasoning/investigative process first, then the exact line ---REASONING_END--- on its own, then your final response (Finding, Limitation, Recommendation). The reasoning will be attached; only the final response appears in the comment.'''
           with open('prompt.txt', 'w') as f: f.write(prompt)
@@ -199,6 +200,7 @@ jobs:
           ''' + user + '''
 
           Please address their feedback. Use the sunspectra-ecommerce-analyst skill if additional data analysis is needed.
+          All SQL must come from mcp_solid-sunspectra_text2sql; pass --source mcp when running query_snowflake.py.
 
           Structure your output: put your reasoning/investigative process first, then the exact line ---REASONING_END--- on its own, then your final response. The reasoning will be attached; only the final response appears in the comment.'''
           with open('fallback_prompt.txt', 'w') as f: f.write(prompt)
