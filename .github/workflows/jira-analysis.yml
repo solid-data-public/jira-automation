@@ -113,8 +113,9 @@ jobs:
 
           Use the sunspectra-ecommerce-analyst skill to conduct a full, deep, data-driven analysis.
           Follow the skill's workflow: clarify the question, generate SQL via mcp_solid-sunspectra_text2sql,
-          execute via scripts/query_snowflake.py, interpret, and report. Output findings in the
-          skill's format (Finding, Limitation, Recommendation). Be skeptical and evidence-based.'''
+          execute via scripts/query_snowflake.py, interpret, and report. Be skeptical and evidence-based.
+
+          Structure your output: put your reasoning/investigative process first, then the exact line ---REASONING_END--- on its own, then your final response (Finding, Limitation, Recommendation). The reasoning will be attached; only the final response appears in the comment.'''
           with open('prompt.txt', 'w') as f: f.write(prompt)
           "
 
@@ -197,7 +198,9 @@ jobs:
 
           ''' + user + '''
 
-          Please address their feedback. Use the sunspectra-ecommerce-analyst skill if additional data analysis is needed.'''
+          Please address their feedback. Use the sunspectra-ecommerce-analyst skill if additional data analysis is needed.
+
+          Structure your output: put your reasoning/investigative process first, then the exact line ---REASONING_END--- on its own, then your final response. The reasoning will be attached; only the final response appears in the comment.'''
           with open('fallback_prompt.txt', 'w') as f: f.write(prompt)
           "
             agent -p --force --output-format stream-json "$(cat fallback_prompt.txt)" 2>/dev/null | tee cursor_output.json > /dev/null || true
@@ -263,6 +266,24 @@ jobs:
           fi
           echo "--- End diagnose ---"
 
+      - name: Split reasoning from response
+        if: always()
+        run: |
+          if [ ! -f analysis_output.txt ]; then
+            echo "Cursor CLI produced no output. Check workflow logs." > analysis_output.txt
+          fi
+          python3 -c "
+          content = open('analysis_output.txt').read()
+          d = '---REASONING_END---'
+          if d in content:
+            before, after = content.split(d, 1)
+            if before.strip():
+              open('reasoning.txt', 'w').write(before.strip())
+            open('comment_content.txt', 'w').write(after.strip()[:32000])
+          else:
+            open('comment_content.txt', 'w').write(content[:32000])
+          "
+
       - name: Post analysis to JIRA
         if: always()
         env:
@@ -276,10 +297,6 @@ jobs:
             exit 1
           fi
 
-          if [ ! -f analysis_output.txt ]; then
-            echo "Cursor CLI produced no output. Check workflow logs." > analysis_output.txt
-          fi
-
           CURSOR_STATUS="${{ steps.cursor.outputs.status }}${{ steps.cursor_reply.outputs.status }}"
           {
             if [ "$CURSOR_STATUS" != "success" ]; then
@@ -287,6 +304,7 @@ jobs:
               echo ""
               echo "---"
               echo "Raw output:"
+              head -c 32000 analysis_output.txt
             else
               if [ "${{ steps.mode.outputs.is_reply }}" = "true" ]; then
                 echo "**Response:**"
@@ -294,14 +312,19 @@ jobs:
                 echo "**Analysis complete.**"
               fi
               echo ""
+              cat comment_content.txt
             fi
-            head -c 32000 analysis_output.txt
           } > jira_comment_body.txt
 
+          REASONING_ARG=""
+          if [ -f reasoning.txt ] && [ -s reasoning.txt ]; then
+            REASONING_ARG="--reasoning-file reasoning.txt"
+          fi
+
           if [ -f session_id.txt ] && [ -s session_id.txt ]; then
-            python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/analysis_queries" --append-session "$(cat session_id.txt)" < jira_comment_body.txt
+            python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/analysis_queries" --append-session "$(cat session_id.txt)" $REASONING_ARG < jira_comment_body.txt
           else
-            python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/analysis_queries" < jira_comment_body.txt
+            python scripts/post_to_jira.py --issue-key "$ISSUE_KEY" --attachments-dir "${{ github.workspace }}/analysis_queries" $REASONING_ARG < jira_comment_body.txt
           fi
 
       - name: Fail on Cursor error

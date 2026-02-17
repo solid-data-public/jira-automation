@@ -60,11 +60,15 @@ echo "<SQL>" | python scripts/query_snowflake.py --name "short_description" --de
 
 ## Output Format
 
-When presenting findings:
+Structure your response in two parts separated by the exact delimiter `---REASONING_END---`:
 
-- **Finding**: What the data shows (with numbers, time ranges, segments)
-- **Limitation**: What we don't know or can't conclude
-- **Recommendation**: Only if data supports it; otherwise "No recommendation—insufficient data"
+1. **Reasoning (before the delimiter):** Your investigative process—what you checked, queries you ran, codebase exploration, data you pulled. This will be saved as an attachment, not shown in the main comment.
+2. **Final response (after the delimiter):** Your concise findings for the reader. Use:
+   - **Finding**: What the data shows (with numbers, time ranges, segments)
+   - **Limitation**: What we don't know or can't conclude
+   - **Recommendation**: Only if data supports it; otherwise "No recommendation—insufficient data"
+
+The final response should be scannable and actionable. Do not repeat your reasoning process after the delimiter.
 
 ## Anti-Patterns
 

@@ -6,10 +6,14 @@ Usage:
   python scripts/post_to_jira.py --issue-key PROJECT-123 --body "Comment text"
   echo "Comment text" | python scripts/post_to_jira.py --issue-key PROJECT-123
   python scripts/post_to_jira.py --issue-key PROJECT-123 --attachments-dir ./queries < body.txt
+  python scripts/post_to_jira.py --issue-key PROJECT-123 --reasoning-file reasoning.txt < body.txt
 
 When --attachments-dir is set, all files in that directory are uploaded as issue
 attachments before the comment is posted, and the comment body is appended with
 a list of the attached SQL query files.
+
+When --reasoning-file is set, that file is uploaded as an attachment and listed under
+"Reasoning" in the comment body.
 
 When --append-session is set, appends "Reply to continue the conversation. Session: `uuid`"
 so the reply workflow can resume the Cursor conversation.
@@ -210,6 +214,37 @@ def _markdown_to_adf(text: str) -> dict:
     return {"type": "doc", "version": 1, "content": content}
 
 
+def _upload_file(
+    base_url: str,
+    auth: tuple[str, str],
+    issue_key: str,
+    file_path: Path,
+) -> str | None:
+    """Upload a single file to the JIRA issue. Returns filename if successful."""
+    url = f"{base_url}/rest/api/3/issue/{issue_key}/attachments"
+    headers = {"X-Atlassian-Token": "no-check"}
+    try:
+        with open(file_path, "rb") as fp:
+            resp = requests.post(
+                url,
+                auth=auth,
+                headers=headers,
+                files={"file": (file_path.name, fp, "text/plain")},
+                timeout=60,
+            )
+        if resp.status_code >= 400:
+            print(
+                f"Warning: failed to upload {file_path.name}: {resp.status_code} {resp.text[:200]!r}",
+                file=sys.stderr,
+            )
+            return None
+        print(f"Uploaded {file_path.name}", file=sys.stderr)
+        return file_path.name
+    except Exception as e:
+        print(f"Warning: failed to upload {file_path.name}: {e}", file=sys.stderr)
+        return None
+
+
 def _upload_attachments(
     base_url: str,
     auth: tuple[str, str],
@@ -267,6 +302,12 @@ def main() -> None:
         help="Directory of files to attach to the issue before posting the comment.",
     )
     parser.add_argument(
+        "--reasoning-file",
+        type=str,
+        metavar="PATH",
+        help="Path to reasoning/thinking log file to attach (listed under Reasoning in comment).",
+    )
+    parser.add_argument(
         "--append-session",
         type=str,
         metavar="SESSION_ID",
@@ -303,6 +344,8 @@ def main() -> None:
     auth = (os.environ["JIRA_EMAIL"], os.environ["JIRA_API_TOKEN"])
 
     uploaded: list[str] = []
+    reasoning_name: str | None = None
+
     if args.attachments_dir:
         attachments_path = Path(args.attachments_dir).resolve()
         if attachments_path.exists() and attachments_path.is_dir():
@@ -319,6 +362,22 @@ def main() -> None:
                 f"Attachments dir not found or not a directory: {attachments_path}",
                 file=sys.stderr,
             )
+
+    if args.reasoning_file:
+        reasoning_path = Path(args.reasoning_file).resolve()
+        if reasoning_path.exists() and reasoning_path.is_file():
+            name = _upload_file(base_url, auth, args.issue_key, reasoning_path)
+            if name:
+                reasoning_name = name
+        else:
+            print(
+                f"Reasoning file not found: {reasoning_path}",
+                file=sys.stderr,
+            )
+
+    if reasoning_name:
+        body += "\n\n---\n\n**Reasoning:**\n"
+        body += f"- {reasoning_name}\n"
 
     if args.append_session:
         body += "\n\n---\n\n*Reply to continue the conversation. Session: `" + args.append_session + "`*"
